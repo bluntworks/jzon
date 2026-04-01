@@ -49,6 +49,21 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(&b.addRunArtifact(bench_exe).step);
 
+    // Server-based simulation client
+    const sim_client_mod = b.createModule(.{
+        .root_source_file = b.path("test/sim_client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sim_client_mod.addImport("jzon", jzon_mod);
+    const sim_client_exe = b.addExecutable(.{
+        .name = "sim-client",
+        .root_module = sim_client_mod,
+    });
+    b.installArtifact(sim_client_exe);
+    const sim_server_step = b.step("sim-server", "Build simulation client (requires Node server running)");
+    sim_server_step.dependOn(&b.addRunArtifact(sim_client_exe).step);
+
     // Deterministic simulation tests
     const sim_mod = b.createModule(.{
         .root_source_file = b.path("test/sim.zig"),

@@ -2,6 +2,13 @@
 
 ## 2026-04-01
 
+### Server-based chaos simulation client
+
+- `test/sim_client.zig`: Zig executable that connects to the Node chaos server, consumes SSE stream with jzon, validates extractions across providers (OpenAI, Anthropic, Ollama, tool calls).
+- Accepts `--seed`, `--events`, `--port` flags for reproducible runs.
+- Reports extracted vs error counts per seed. ~95% extraction rate with ~5-10% intentional fault injection.
+- Usage: `node bench/server.js & ./zig-out/bin/sim-client --seed 0xdeadbeef --events 500`
+
 ### Deterministic simulation testing (Tiger-Style DST)
 
 - TigerBeetle-inspired deterministic simulation: all randomness from one u64 seed, same seed = identical test execution.
