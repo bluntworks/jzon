@@ -2,6 +2,14 @@
 
 ## 2026-04-01
 
+### Deterministic simulation testing (Tiger-Style DST)
+
+- TigerBeetle-inspired deterministic simulation: all randomness from one u64 seed, same seed = identical test execution.
+- Five strategies: positive (valid JSON vs std.json oracle), negative (corrupted JSON), round-trip (escape/unescape + writer/getString), chunk chaos (split at random byte boundaries), assembler (random-sized fragments).
+- PRNG-driven parameters: object depth 0-10, keys 0-5, strings 0-20 chars with escapes/unicode, numbers with decimals/negatives.
+- 1000 seeds run in `zig build test`, 10000 seeds in extended test. Regression seed array for known failures.
+- Total: 194 tests passing.
+
 ### Benchmark infrastructure
 
 - **Mock SSE server** (`bench/server.js`): Node.js server with benchmark endpoints (OpenAI, Anthropic, Ollama) and seeded chaos simulation endpoint for deterministic testing.

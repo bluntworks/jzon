@@ -49,6 +49,17 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(&b.addRunArtifact(bench_exe).step);
 
+    // Deterministic simulation tests
+    const sim_mod = b.createModule(.{
+        .root_source_file = b.path("test/sim.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sim_mod.addImport("jzon", jzon_mod);
+    const sim_tests = b.addTest(.{ .root_module = sim_mod });
+    const run_sim = b.addRunArtifact(sim_tests);
+    test_step.dependOn(&run_sim.step);
+
     // Integration tests
     const integration_mod = b.createModule(.{
         .root_source_file = b.path("test/integration_test.zig"),
