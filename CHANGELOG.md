@@ -2,6 +2,11 @@
 
 ## 2026-04-01
 
+### Enhanced simulation data variation + verbose mode
+
+- **Zig sim**: Configurable per-seed generation parameters (depth 1-60, strings 0-500 chars, keys 0-15, arrays 0-30 elements). Three unicode richness modes (ASCII-only, basic, full with surrogate pairs/CJK/emoji). Three whitespace modes. Four number styles (integer, decimal, exponent, all). Eight corruption types. Realistic LLM API key names for prefix-matching edge cases. LLM payload simulation strategy.
+- **Node server**: 54-word vocabulary, code snippets (Python/JS/Zig/bash/SQL), markdown patterns, multi-sentence content, empty/single-char edge cases. Seven corruption types. VERBOSE=1 env var shows generated payloads.
+
 ### Server-based chaos simulation client
 
 - `test/sim_client.zig`: Zig executable that connects to the Node chaos server, consumes SSE stream with jzon, validates extractions across providers (OpenAI, Anthropic, Ollama, tool calls).
