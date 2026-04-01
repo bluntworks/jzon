@@ -2,6 +2,12 @@
 
 ## 2026-04-01
 
+### SSE streaming benchmarks
+
+- New `bench/stream-bench.sh` — measures the full SSE pipeline: TCP connect → read stream → split lines → parse → extract content. All three languages hit the same Node mock server.
+- Zig stream clients: `bench/stream_client.zig` (raw TCP + jzon), `bench/stream_client.ts` (fetch + JSON.parse), `bench/stream_client.py` (urllib + json.loads)
+- Results (10K events): OpenAI SSE — jzon 270K/s vs TS 87K/s (3.1x) vs Python 32K/s (8.4x). Anthropic/Ollama — jzon 1.4x faster than TS (I/O dominated with simpler payloads).
+
 ### Enhanced simulation data variation + verbose mode
 
 - **Zig sim**: Configurable per-seed generation parameters (depth 1-60, strings 0-500 chars, keys 0-15, arrays 0-30 elements). Three unicode richness modes (ASCII-only, basic, full with surrogate pairs/CJK/emoji). Three whitespace modes. Four number styles (integer, decimal, exponent, all). Eight corruption types. Realistic LLM API key names for prefix-matching edge cases. LLM payload simulation strategy.

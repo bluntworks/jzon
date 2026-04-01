@@ -49,6 +49,19 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(&b.addRunArtifact(bench_exe).step);
 
+    // SSE streaming benchmark client
+    const stream_bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/stream_client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    stream_bench_mod.addImport("jzon", jzon_mod);
+    const stream_bench_exe = b.addExecutable(.{
+        .name = "stream-bench",
+        .root_module = stream_bench_mod,
+    });
+    b.installArtifact(stream_bench_exe);
+
     // Server-based simulation client
     const sim_client_mod = b.createModule(.{
         .root_source_file = b.path("test/sim_client.zig"),
