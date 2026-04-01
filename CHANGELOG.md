@@ -10,6 +10,7 @@
   - `path.zig`: Arbitrary bytes as JSON to `getString`/`getInt`/`getBool`/`getRaw`
   - `assembler.zig`: Arbitrary bytes as single chunk + byte-at-a-time split
 - Added scanner idempotence test: whole-buffer vs byte-at-a-time produces identical token sequences
+- Continuous coverage-guided fuzzing (`zig build fuzz --fuzz`) blocked by Zig 0.15.2 build runner bug (null `fuzz_context` panic). Fuzz functions run as single-pass smoke tests in normal `zig build test`. Will work when Zig fixes the plumbing — no code changes needed.
 - Total: 192 tests passing
 
 ### jzon v0.1.0 — all components implemented
