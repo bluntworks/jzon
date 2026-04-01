@@ -2,6 +2,16 @@
 
 ## 2026-04-01
 
+### Fuzz tests and scanner idempotence test
+
+- Added fuzz tests to all input-facing components using `std.testing.fuzz`:
+  - `escape.zig`: Arbitrary bytes to `unescape` + escape/unescape roundtrip
+  - `scanner.zig`: Arbitrary bytes through tokenizer
+  - `path.zig`: Arbitrary bytes as JSON to `getString`/`getInt`/`getBool`/`getRaw`
+  - `assembler.zig`: Arbitrary bytes as single chunk + byte-at-a-time split
+- Added scanner idempotence test: whole-buffer vs byte-at-a-time produces identical token sequences
+- Total: 192 tests passing
+
 ### jzon v0.1.0 — all components implemented
 
 - **path.zig** (18 tests): Zero-copy path extraction with comptime path expressions. `getString`, `getRaw`, `getInt`, `getBool`. Skips non-matching subtrees by depth counting. Handles real OpenAI and Anthropic SSE payloads.

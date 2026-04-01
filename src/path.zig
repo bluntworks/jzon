@@ -382,3 +382,19 @@ test "getString extracts error message path" {
     const result = getString(json, comptime path("error.message"));
     try std.testing.expectEqualStrings("rate limit exceeded", result.?);
 }
+
+// --- Fuzz tests ---
+
+test "fuzz getString never crashes on arbitrary input" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            // Try extracting from arbitrary bytes with various path shapes
+            _ = getString(input, comptime path("a"));
+            _ = getString(input, comptime path("a.b.c"));
+            _ = getString(input, comptime path("a[0].b"));
+            _ = getInt(input, comptime path("a"));
+            _ = getBool(input, comptime path("a"));
+            _ = getRaw(input, comptime path("a[0]"));
+        }
+    }.f, .{});
+}

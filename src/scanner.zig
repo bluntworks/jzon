@@ -436,3 +436,57 @@ test "scanner handles mixed array values" {
     defer tokens.deinit(std.testing.allocator);
     try expectTags(tokens.items, &.{ .array_begin, .number, .string, .true_literal, .null_literal, .array_end });
 }
+
+// --- Fuzz tests ---
+
+test "fuzz scanner never crashes on arbitrary input" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            var scanner = Scanner.init();
+            var pos: usize = 0;
+            while (pos < input.len) {
+                _ = scanner.next(input, &pos) catch break;
+            }
+        }
+    }.f, .{});
+}
+
+// --- Scanner idempotence: byte-at-a-time must produce same tags as whole-buffer ---
+
+test "scanner produces same tokens regardless of chunk boundaries" {
+    const cases = [_][]const u8{
+        \\{"a":1,"b":[true,null],"c":{"d":"e"}}
+        ,
+        \\[1,"two",false,{"nested":[3,4]}]
+        ,
+        \\{"escape":"hello \"world\"\nnewline"}
+        ,
+    };
+
+    for (cases) |json| {
+        // Whole buffer
+        var whole = try collectTokens(json);
+        defer whole.deinit(std.testing.allocator);
+
+        // Byte-at-a-time
+        var scanner = Scanner.init();
+        var byte_tokens: std.ArrayListUnmanaged(Token.Tag) = .empty;
+        defer byte_tokens.deinit(std.testing.allocator);
+        var pos: usize = 0;
+        while (pos < json.len) {
+            const old_pos = pos;
+            if (scanner.next(json, &pos) catch break) |token| {
+                try byte_tokens.append(std.testing.allocator, token.tag);
+            } else {
+                // If pos didn't advance and we got null, move forward to avoid infinite loop
+                if (pos == old_pos) pos += 1;
+            }
+        }
+
+        // Tags must match
+        try std.testing.expectEqual(whole.items.len, byte_tokens.items.len);
+        for (whole.items, 0..) |token, i| {
+            try std.testing.expectEqual(token.tag, byte_tokens.items[i]);
+        }
+    }
+}

@@ -219,3 +219,38 @@ test "escape roundtrip preserves string" {
         try std.testing.expectEqualStrings(input, unescaped);
     }
 }
+
+// --- Fuzz tests ---
+
+test "fuzz unescape never crashes on arbitrary input" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            var scratch: [4096]u8 = undefined;
+            _ = unescape(input, &scratch) catch {};
+        }
+    }.f, .{});
+}
+
+test "fuzz escape then unescape roundtrips without crashing" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            // Escape arbitrary bytes (escape accepts any []const u8)
+            var escaped_buf: [16384]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&escaped_buf);
+            escape(fbs.writer(), input) catch return; // buffer too small is fine
+            const escaped = fbs.getWritten();
+
+            // Unescape must roundtrip back to original
+            var scratch: [4096]u8 = undefined;
+            const result = unescape(escaped, &scratch) catch return;
+            const unescaped = switch (result) {
+                .clean => |s| s,
+                .allocated => |s| s,
+            };
+            // The roundtrip must produce the original input
+            if (!std.mem.eql(u8, input, unescaped)) {
+                return error.RoundtripMismatch;
+            }
+        }
+    }.f, .{});
+}

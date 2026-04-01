@@ -196,3 +196,28 @@ test "assembler handles empty chunk" {
     _ = try asmb.feed(std.testing.allocator, "");
     try std.testing.expectEqual(Assembler.State.empty, asmb.state);
 }
+
+// --- Fuzz tests ---
+
+test "fuzz assembler never crashes on arbitrary input as single chunk" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            var asmb = Assembler.init();
+            defer asmb.deinit(std.testing.allocator);
+            _ = asmb.feed(std.testing.allocator, input) catch {};
+        }
+    }.f, .{});
+}
+
+test "fuzz assembler never crashes with input split at every byte" {
+    try std.testing.fuzz({}, struct {
+        fn f(_: void, input: []const u8) anyerror!void {
+            // Feed one byte at a time
+            var asmb = Assembler.init();
+            defer asmb.deinit(std.testing.allocator);
+            for (input) |byte| {
+                _ = asmb.feed(std.testing.allocator, &.{byte}) catch break;
+            }
+        }
+    }.f, .{});
+}
