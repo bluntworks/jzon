@@ -34,6 +34,21 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_unit_tests.step);
     }
 
+    // Benchmark executable
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_mod.addImport("jzon", jzon_mod);
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = bench_mod,
+    });
+    b.installArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(&b.addRunArtifact(bench_exe).step);
+
     // Integration tests
     const integration_mod = b.createModule(.{
         .root_source_file = b.path("test/integration_test.zig"),

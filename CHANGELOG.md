@@ -2,6 +2,16 @@
 
 ## 2026-04-01
 
+### Benchmark infrastructure
+
+- **Mock SSE server** (`bench/server.js`): Node.js server with benchmark endpoints (OpenAI, Anthropic, Ollama) and seeded chaos simulation endpoint for deterministic testing.
+- **Three benchmark clients** comparing jzon (Zig) vs TypeScript (`JSON.parse`) vs Python (`json.loads`) on identical payloads:
+  - Path extraction: jzon 1.8M/s vs TS 859K/s vs Python 222K/s (2-8x faster)
+  - Request building: jzon 1.1M/s vs TS 424K/s vs Python 125K/s (2.6-9x faster)
+  - Tool assembly: jzon 127K/s vs TS 24K/s vs Python 55K/s
+- **Orchestrator** (`bench/run.sh`): builds, runs all three, prints comparison table
+- Peak RSS: Zig ~1MB, TypeScript ~80MB, Python ~8MB
+
 ### Fuzz tests and scanner idempotence test
 
 - Added fuzz tests to all input-facing components using `std.testing.fuzz`:

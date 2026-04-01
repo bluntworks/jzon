@@ -1,0 +1,38 @@
+{
+  "openai_chunks": [
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"!\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Here is some code:\\n```python\\ndef hello():\\n    print(\\\"hi\\\")\\n```\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"The temperature is 72\\u00b0F today.\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Let me think about that for a moment. The answer involves several considerations:\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"1\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\". First, we need to consider the implications of\\n\\n> This is a blockquote\\n\\nAnd then continue.\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Use `std.json.parseFromSlice` for full document parsing.\"},\"finish_reason\":null}]}",
+    "{\"id\":\"chatcmpl-abc123\",\"object\":\"chat.completion.chunk\",\"created\":1694268190,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Tab\\there, backslash\\\\there, slash\\/there\"},\"finish_reason\":null}]}"
+  ],
+  "anthropic_chunks": [
+    "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello from Claude\"}}",
+    "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" - here is a longer response with some details about the topic.\"}}",
+    "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"```\\nconst x = 42;\\n```\"}}",
+    "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\u2728 Unicode sparkles \\u2728\"}}"
+  ],
+  "ollama_chunks": [
+    "{\"model\":\"llama3\",\"created_at\":\"2024-01-01T00:00:00Z\",\"response\":\"Hi\",\"done\":false}",
+    "{\"model\":\"llama3\",\"created_at\":\"2024-01-01T00:00:00Z\",\"response\":\" there! How can I help you today?\",\"done\":false}",
+    "{\"model\":\"llama3\",\"created_at\":\"2024-01-01T00:00:00Z\",\"response\":\"Here's a quick example:\\n\\n```\\nprint('hello')\\n```\",\"done\":false}"
+  ],
+  "tool_call_fragments": [
+    "{\"",
+    "city\"",
+    ": \"San",
+    " Francisco\",",
+    "\"state\": \"CA\"}"
+  ],
+  "request_fields": {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "user_message": "What is the weather in San Francisco?",
+    "tools_json": "[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}}}]"
+  }
+}
