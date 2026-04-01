@@ -1,0 +1,12 @@
+.{
+    .name = .jzon,
+    .version = "0.1.0",
+    .fingerprint = 0x64d61ecad7b0850a,
+    .minimum_zig_version = "0.15.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+    },
+}
