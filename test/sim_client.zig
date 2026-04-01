@@ -16,6 +16,7 @@ pub fn main() !void {
     var seed: u64 = 42;
     var events: u32 = 500;
     var port: u16 = 3000;
+    var verbose_flag: bool = false;
 
     const args = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, args);
@@ -31,6 +32,8 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "--port") and i + 1 < args.len) {
             i += 1;
             port = std.fmt.parseInt(u16, args[i], 0) catch 3000;
+        } else if (std.mem.eql(u8, args[i], "--verbose") or std.mem.eql(u8, args[i], "-v")) {
+            verbose_flag = true;
         }
     }
 
@@ -100,32 +103,34 @@ pub fn main() !void {
 
         // Try OpenAI extraction
         if (jzon.getString(data, comptime jzon.path("choices[0].delta.content"))) |content| {
-            _ = content;
+            if (verbose_flag) verbosePrint("  [{d}] openai: \"{s}\"\n", .{ event_count, content });
             extract_count += 1;
             continue;
         }
 
         // Try Anthropic text extraction
         if (jzon.getString(data, comptime jzon.path("delta.text"))) |text| {
-            _ = text;
+            if (verbose_flag) verbosePrint("  [{d}] anthropic: \"{s}\"\n", .{ event_count, text });
             extract_count += 1;
             continue;
         }
 
         // Try Ollama extraction
         if (jzon.getString(data, comptime jzon.path("response"))) |resp| {
-            _ = resp;
+            if (verbose_flag) verbosePrint("  [{d}] ollama: \"{s}\"\n", .{ event_count, resp });
             extract_count += 1;
             continue;
         }
 
         // Try tool call extraction
-        if (jzon.getString(data, comptime jzon.path("delta.partial_json"))) |_| {
+        if (jzon.getString(data, comptime jzon.path("delta.partial_json"))) |pj| {
+            if (verbose_flag) verbosePrint("  [{d}] tool_call: \"{s}\"\n", .{ event_count, pj });
             extract_count += 1;
             continue;
         }
 
         // Couldn't extract — might be malformed (expected for some events)
+        if (verbose_flag) verbosePrint("  [{d}] MALFORMED: {s}\n", .{ event_count, data[0..@min(data.len, 120)] });
         error_count += 1;
     }
 
@@ -143,4 +148,10 @@ pub fn main() !void {
 
 fn printErr(msg: []const u8) void {
     _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
+}
+
+fn verbosePrint(comptime fmt: []const u8, args: anytype) void {
+    var buf: [1024]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    _ = std.posix.write(std.posix.STDOUT_FILENO, line) catch {};
 }
