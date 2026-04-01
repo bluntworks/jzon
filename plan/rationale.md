@@ -89,6 +89,63 @@ This works but is error-prone — missing commas, unescaped strings, and mismatc
 
 **jzon's solution: typed ObjectWriter/ArrayWriter.** A builder that handles comma insertion, string escaping, and nesting automatically. The `raw()` method is critical — tool parameter schemas are already JSON strings, and the builder can embed them directly without a parse-serialize round trip.
 
+## Tiger-Style Alignment
+
+jzon's design naturally aligns with Tiger-Style principles, which is why the discipline fits without forcing:
+
+### Zero allocation = static allocation on hot paths
+
+The Scanner and path extraction components perform **zero heap allocations**. All state fits in a fixed-size struct on the stack. This isn't just a performance choice — it's a correctness choice. When there's no allocator, there's no allocation failure to handle, no memory leak to track, no fragmentation to worry about. The hot path (SSE line parsing) becomes a pure function of `(state, bytes) → tokens`.
+
+The Assembler is the one component that allocates, because partial chunks must be accumulated across SSE events. But it uses a single `ArrayListUnmanaged(u8)` — one contiguous buffer, caller-owned allocator, explicit `deinit`. The allocation pattern is simple enough to reason about exhaustively.
+
+### Bounded everything
+
+Every data structure has an explicit, compile-time-validated capacity:
+
+| Resource | Bound | Rationale |
+|----------|-------|-----------|
+| Scanner nesting depth | 64 | LLM API payloads nest ~5 deep. 64 is generous. `u6` type naturally caps it |
+| PathExpr segments | 8 | Longest real path is ~5 segments. Stored inline, no heap |
+| Writer nesting depth | 64 | Matches Scanner. Same `MAX_DEPTH` constant, validated at comptime |
+| Assembler bracket depth | 256 | Tool call args can be nested objects. 256 handles any realistic schema |
+| Scanner state struct | ≤256 bytes | Fits in L1 cache. Validated at comptime |
+
+Exceeding any bound returns a typed error (`error.MaxDepthExceeded`, `error.ScratchBufferTooSmall`). These are recoverable runtime conditions — the caller decides what to do. No panics for untrusted input.
+
+### Fatal vs recoverable error separation
+
+jzon draws a clear line:
+
+**Fatal (assertion)** — programmer bugs, API misuse:
+- Calling `slice()` on an incomplete Assembler
+- Calling `end()` when Writer depth is already 0
+- Decrementing Scanner depth when it's already 0
+
+These can't happen in correct code. An assertion failure means the caller has a bug, and continuing would produce corrupt output.
+
+**Recoverable (error return)** — runtime conditions from untrusted input:
+- Malformed JSON in Scanner (`error.UnexpectedToken`)
+- Nesting exceeds bounds (`error.MaxDepthExceeded`)
+- Truncated escape sequence (`error.InvalidEscape`)
+- Assembler detects structural impossibility (`error.AssemblerInvalid`)
+
+The caller handles these with normal Zig error handling (`try`, `catch`, `orelse`).
+
+### Validate at boundaries, trust internally
+
+The boundary is where external bytes enter jzon — `scanner.feed()`, `assembler.feed()`, `path.getString()`, `escape.unescape()`. Every byte from these inputs is validated. No assumptions about encoding, structure, or well-formedness.
+
+Internal interfaces between components (e.g., `path.zig` calling `Scanner` methods) trust each other. The Scanner's token stream is well-formed by construction — `path.zig` doesn't re-validate it.
+
+### Determinism
+
+Every jzon function is a pure function of its inputs. No randomness, no timestamps, no hash maps with iteration-order dependence, no global state. Feed the same bytes → get the same tokens, the same extracted values, the same written output. This makes every component trivially testable and debuggable.
+
+### State machines with explicit transitions
+
+The Scanner and Assembler are both state machines with enumerated states and validated transitions. Every `(state, byte)` pair maps to exactly one outcome — a new state, a token emission, or an error. There are no implicit states, no boolean flag combinations that encode hidden states, no state that depends on the call history beyond the explicit state field.
+
 ## Why Not Existing Libraries
 
 ### zimdjson (simdjson port)
@@ -110,6 +167,7 @@ jzon deliberately does NOT include:
 - **SIMD optimization** — payloads are too small to benefit
 - **Config file parsing** — one-shot at startup, `std.json` handles this perfectly
 - **Provider-specific logic** — jzon is a JSON tool, not an LLM client library
+- **Speculative abstractions** — no plugin systems, no generic visitors, no extension points. Five files, each solving one problem
 
 The library should be ~3-5K lines of Zig. Five source files. Zero dependencies beyond `std`. If it grows beyond that, something has gone wrong with scope.
 
@@ -121,6 +179,7 @@ The library should be ~3-5K lines of Zig. Five source files. Zero dependencies b
 | Parse 1000 SSE lines in a conversation | ~15,000 alloc/free cycles | 0 alloc/free cycles for extraction | Tokenizer is stack-only |
 | Detect tool call completion | Not possible during streaming | Immediate on bracket balance | Assembler tracks state across chunks |
 | Build request body with 5 tools | Manual string concat, ~20 lines | Builder API, ~10 lines | Automatic commas/escaping |
+| Scanner state memory | N/A (tree-based) | ≤256 bytes on stack | Fits in L1 cache |
 
 ## Relationship to Nullclaw
 
