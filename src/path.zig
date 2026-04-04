@@ -84,6 +84,28 @@ pub fn getRaw(json: []const u8, comptime expr: PathExpr) ?[]const u8 {
     };
 }
 
+/// Extract a raw JSON object `{...}` at the given path. Returns a slice into `json`.
+pub fn getObject(json: []const u8, comptime expr: PathExpr) ?[]const u8 {
+    var ctx = MatchContext.init(expr);
+    const token = ctx.findTarget(json) orelse return null;
+    if (token.tag != .object_begin) return null;
+    // token.depth is the depth AFTER entering the object.
+    // We need to find the matching close brace. The object_end token
+    // will have depth = token.depth - 1.
+    const start_pos = ctx.pos;
+    ctx.skipContainer(json, token.depth);
+    // start_pos - 1 points to the char right after `{` was consumed,
+    // but we need to include the `{`. The scanner already advanced past `{`,
+    // so the `{` is at start_pos - 1... actually, let's compute from token position.
+    // The scanner pos after findTarget returned object_begin is right after the `{`.
+    // After skipContainer, pos is right after the closing `}`.
+    // We need json from the `{` to the `}` inclusive.
+    // start_pos is where ctx.pos was when findTarget returned — that's right after `{`.
+    // So `{` is at start_pos - 1.
+    if (start_pos == 0) return null;
+    return json[start_pos - 1 .. ctx.pos];
+}
+
 /// Extract an integer at the given path.
 pub fn getInt(json: []const u8, comptime expr: PathExpr) ?i64 {
     var ctx = MatchContext.init(expr);
@@ -229,7 +251,12 @@ const MatchContext = struct {
     fn skipContainer(self: *MatchContext, json: []const u8, container_depth: u8) void {
         const target = container_depth - 1;
         while (true) {
-            const token = (self.scanner.next(json, &self.pos) catch return) orelse return;
+            const token = (self.scanner.next(json, &self.pos) catch return) orelse {
+                // scanner.next returns null for non-token chars (commas, colons)
+                // as well as at end-of-input. Only bail if truly at the end.
+                if (self.pos >= json.len) return;
+                continue;
+            };
             switch (token.tag) {
                 .object_end, .array_end => {
                     if (token.depth == target) return;
@@ -383,6 +410,39 @@ test "getString extracts error message path" {
     try std.testing.expectEqualStrings("rate limit exceeded", result.?);
 }
 
+test "getObject extracts object at path" {
+    const json = "{\"a\":{\"b\":{\"x\":1,\"y\":2}}}";
+    const result = getObject(json, comptime path("a.b"));
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("{\"x\":1,\"y\":2}", result.?);
+}
+
+test "getObject extracts nested object in array" {
+    const json = "{\"items\":[{\"args\":{\"prompt\":\"hello\"}}]}";
+    const result = getObject(json, comptime path("items[0].args"));
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("{\"prompt\":\"hello\"}", result.?);
+}
+
+test "getObject returns null for non-object" {
+    const json = "{\"a\":\"string\"}";
+    try std.testing.expect(getObject(json, comptime path("a")) == null);
+}
+
+test "getString finds sibling key after nested object in array element" {
+    const json = "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]},\"finishReason\":\"STOP\"}]}";
+    const fr = getString(json, comptime path("candidates[0].finishReason"));
+    try std.testing.expect(fr != null);
+    try std.testing.expectEqualStrings("STOP", fr.?);
+}
+
+test "getString finds sibling key after nested array in object" {
+    const json = "{\"a\":{\"items\":[1,2,3],\"name\":\"found\"}}";
+    const result = getString(json, comptime path("a.name"));
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("found", result.?);
+}
+
 // --- Fuzz tests ---
 
 test "fuzz getString never crashes on arbitrary input" {
@@ -395,6 +455,8 @@ test "fuzz getString never crashes on arbitrary input" {
             _ = getInt(input, comptime path("a"));
             _ = getBool(input, comptime path("a"));
             _ = getRaw(input, comptime path("a[0]"));
+            _ = getObject(input, comptime path("a"));
+            _ = getObject(input, comptime path("a[0].b"));
         }
     }.f, .{});
 }

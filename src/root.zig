@@ -18,6 +18,7 @@ pub const getString = path_mod.getString;
 pub const getRaw = path_mod.getRaw;
 pub const getInt = path_mod.getInt;
 pub const getBool = path_mod.getBool;
+pub const getObject = path_mod.getObject;
 
 pub const JsonWriter = writer_mod.JsonWriter;
 pub const jsonWriter = writer_mod.jsonWriter;
