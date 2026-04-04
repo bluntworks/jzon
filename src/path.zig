@@ -460,3 +460,264 @@ test "fuzz getString never crashes on arbitrary input" {
         }
     }.f, .{});
 }
+
+// --- DST property tests ---
+// Seeded PRNG generates structured valid JSON with varying nesting patterns,
+// sibling counts, and value types. Verifies extraction correctness — not just
+// crash-freedom. Seed is logged on failure for deterministic replay.
+
+const DstJsonGen = struct {
+    rng: std.Random.Xoshiro256,
+    buf: [4096]u8 = undefined,
+    pos: usize = 0,
+
+    fn init(seed: u64) DstJsonGen {
+        return .{ .rng = std.Random.Xoshiro256.init(seed) };
+    }
+
+    fn random(self: *DstJsonGen) std.Random {
+        return self.rng.random();
+    }
+
+    fn emit(self: *DstJsonGen, bytes: []const u8) void {
+        const space = self.buf.len - self.pos;
+        const n = @min(bytes.len, space);
+        @memcpy(self.buf[self.pos..][0..n], bytes[0..n]);
+        self.pos += n;
+    }
+
+    fn emitByte(self: *DstJsonGen, c: u8) void {
+        if (self.pos < self.buf.len) {
+            self.buf[self.pos] = c;
+            self.pos += 1;
+        }
+    }
+
+    fn json(self: *DstJsonGen) []const u8 {
+        return self.buf[0..self.pos];
+    }
+
+    /// Generate a JSON object with `target_key` placed among random siblings.
+    /// Returns the expected value string for `target_key`.
+    /// `depth` limits nesting to prevent buffer overflow.
+    fn genObject(self: *DstJsonGen, target_key: []const u8, target_value: []const u8, depth: u8) void {
+        self.emitByte('{');
+
+        // How many sibling keys before the target (0-3)
+        const before: u8 = @intCast(self.random().intRangeAtMost(u8, 0, 3));
+        // How many sibling keys after the target (0-3)
+        const after: u8 = @intCast(self.random().intRangeAtMost(u8, 0, 3));
+
+        var first = true;
+        // Emit siblings before target
+        for (0..before) |i| {
+            if (!first) self.emitByte(',');
+            first = false;
+            self.emitByte('"');
+            self.emit("pre");
+            self.emitByte('0' + @as(u8, @intCast(i)));
+            self.emitByte('"');
+            self.emitByte(':');
+            self.genRandomValue(depth +| 1);
+        }
+
+        // Emit the target key
+        if (!first) self.emitByte(',');
+        first = false;
+        self.emitByte('"');
+        self.emit(target_key);
+        self.emitByte('"');
+        self.emitByte(':');
+        self.emitByte('"');
+        self.emit(target_value);
+        self.emitByte('"');
+
+        // Emit siblings after target
+        for (0..after) |i| {
+            if (!first) self.emitByte(',');
+            first = false;
+            self.emitByte('"');
+            self.emit("post");
+            self.emitByte('0' + @as(u8, @intCast(i)));
+            self.emitByte('"');
+            self.emitByte(':');
+            self.genRandomValue(depth +| 1);
+        }
+
+        self.emitByte('}');
+    }
+
+    /// Generate a random JSON value. Nesting structures are generated at depth < 4
+    /// to keep output bounded.
+    fn genRandomValue(self: *DstJsonGen, depth: u8) void {
+        const kind = self.random().intRangeAtMost(u8, 0, if (depth < 4) 5 else 3);
+        switch (kind) {
+            0 => self.emit("42"),
+            1 => self.emit("true"),
+            2 => self.emit("\"x\""),
+            3 => self.emit("null"),
+            4 => {
+                // Nested object with random keys
+                self.emitByte('{');
+                const n = self.random().intRangeAtMost(u8, 0, 3);
+                for (0..n) |i| {
+                    if (i > 0) self.emitByte(',');
+                    self.emitByte('"');
+                    self.emit("k");
+                    self.emitByte('0' + @as(u8, @intCast(i)));
+                    self.emitByte('"');
+                    self.emitByte(':');
+                    self.genRandomValue(depth +| 1);
+                }
+                self.emitByte('}');
+            },
+            5 => {
+                // Nested array with random elements
+                self.emitByte('[');
+                const n = self.random().intRangeAtMost(u8, 0, 3);
+                for (0..n) |i| {
+                    if (i > 0) self.emitByte(',');
+                    self.genRandomValue(depth +| 1);
+                }
+                self.emitByte(']');
+            },
+            else => unreachable,
+        }
+    }
+};
+
+test "DST: getString correctness with random sibling structures" {
+    // Test getString finds target key regardless of surrounding nesting.
+    // This is the class of bug that skipContainer had — complex siblings
+    // causing early bailout.
+    const seed_base: u64 = 0xDEAD_BEEF_CAFE_0000;
+    const num_seeds: u64 = 500;
+
+    for (0..num_seeds) |i| {
+        const seed = seed_base +% i;
+        var gen = DstJsonGen.init(seed);
+
+        // Pattern 1: {"target":"VALUE"} with random siblings
+        gen.genObject("target", "FOUND", 0);
+        const json1 = gen.json();
+        const r1 = getString(json1, comptime path("target"));
+        if (r1 == null) {
+            std.log.err("FAIL seed={d} (0x{x}): getString returned null for path 'target' in: {s}", .{ seed, seed, json1 });
+            return error.TestUnexpectedResult;
+        }
+        if (!std.mem.eql(u8, r1.?, "FOUND")) {
+            std.log.err("FAIL seed={d} (0x{x}): expected 'FOUND', got '{s}' in: {s}", .{ seed, seed, r1.?, json1 });
+            return error.TestUnexpectedResult;
+        }
+
+        // Pattern 2: {"wrap":{"target":"VALUE"}} — nested key with siblings at both levels
+        var gen2 = DstJsonGen.init(seed *% 0x9E3779B97F4A7C15 +% 1);
+        gen2.emitByte('{');
+        // Random siblings before wrap
+        const pre = gen2.random().intRangeAtMost(u8, 0, 2);
+        for (0..pre) |j| {
+            if (j > 0) gen2.emitByte(',');
+            gen2.emitByte('"');
+            gen2.emit("noise");
+            gen2.emitByte('0' + @as(u8, @intCast(j)));
+            gen2.emitByte('"');
+            gen2.emitByte(':');
+            gen2.genRandomValue(1);
+        }
+        if (pre > 0) gen2.emitByte(',');
+        gen2.emitByte('"');
+        gen2.emit("wrap");
+        gen2.emitByte('"');
+        gen2.emitByte(':');
+        gen2.genObject("target", "DEEP", 1);
+        gen2.emitByte('}');
+
+        const json2 = gen2.json();
+        const r2 = getString(json2, comptime path("wrap.target"));
+        if (r2 == null) {
+            std.log.err("FAIL seed={d} (0x{x}): getString returned null for path 'wrap.target' in: {s}", .{ seed, seed, json2 });
+            return error.TestUnexpectedResult;
+        }
+        if (!std.mem.eql(u8, r2.?, "DEEP")) {
+            std.log.err("FAIL seed={d} (0x{x}): expected 'DEEP', got '{s}' in: {s}", .{ seed, seed, r2.?, json2 });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "DST: getString correctness with array index + sibling nesting" {
+    // The exact bug pattern: arr[0].key where arr[0] is an object with nested
+    // siblings before the target key.
+    const seed_base: u64 = 0xBAD_C0DE_0000_0000;
+    const num_seeds: u64 = 500;
+
+    for (0..num_seeds) |i| {
+        const seed = seed_base +% i;
+        var gen = DstJsonGen.init(seed);
+
+        // Build: {"arr":[{...random siblings..., "target":"HIT"}]}
+        gen.emit("{\"arr\":[");
+        gen.genObject("target", "HIT", 1);
+        gen.emit("]}");
+
+        const json = gen.json();
+        const result = getString(json, comptime path("arr[0].target"));
+        if (result == null) {
+            std.log.err("FAIL seed={d} (0x{x}): getString returned null for 'arr[0].target' in: {s}", .{ seed, seed, json });
+            return error.TestUnexpectedResult;
+        }
+        if (!std.mem.eql(u8, result.?, "HIT")) {
+            std.log.err("FAIL seed={d} (0x{x}): expected 'HIT', got '{s}' in: {s}", .{ seed, seed, result.?, json });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "DST: getObject correctness with random sibling structures" {
+    const seed_base: u64 = 0x0123_4567_89AB_0000;
+    const num_seeds: u64 = 500;
+
+    for (0..num_seeds) |i| {
+        const seed = seed_base +% i;
+        var gen = DstJsonGen.init(seed);
+
+        // Build: {"arr":[{...siblings..., "obj":{"inner":"val"}, ...siblings...}]}
+        gen.emit("{\"arr\":[{");
+
+        const before = gen.random().intRangeAtMost(u8, 0, 3);
+        for (0..before) |j| {
+            if (j > 0) gen.emitByte(',');
+            gen.emitByte('"');
+            gen.emit("s");
+            gen.emitByte('0' + @as(u8, @intCast(j)));
+            gen.emitByte('"');
+            gen.emitByte(':');
+            gen.genRandomValue(2);
+        }
+        if (before > 0) gen.emitByte(',');
+        gen.emit("\"obj\":{\"inner\":\"val\"}");
+
+        const after_count = gen.random().intRangeAtMost(u8, 0, 2);
+        for (0..after_count) |j| {
+            gen.emitByte(',');
+            gen.emitByte('"');
+            gen.emit("t");
+            gen.emitByte('0' + @as(u8, @intCast(j)));
+            gen.emitByte('"');
+            gen.emitByte(':');
+            gen.genRandomValue(2);
+        }
+        gen.emit("}]}");
+
+        const json = gen.json();
+        const result = getObject(json, comptime path("arr[0].obj"));
+        if (result == null) {
+            std.log.err("FAIL seed={d} (0x{x}): getObject returned null for 'arr[0].obj' in: {s}", .{ seed, seed, json });
+            return error.TestUnexpectedResult;
+        }
+        if (!std.mem.eql(u8, result.?, "{\"inner\":\"val\"}")) {
+            std.log.err("FAIL seed={d} (0x{x}): expected '{{\"inner\":\"val\"}}', got '{s}' in: {s}", .{ seed, seed, result.?, json });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
