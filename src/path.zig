@@ -71,6 +71,61 @@ pub fn getString(json: []const u8, comptime expr: PathExpr) ?[]const u8 {
     return token.bytes;
 }
 
+/// Extract a string value at the given path, unescaping JSON escape sequences
+/// into `buf`. Returns a slice of `buf` with the unescaped content.
+/// Handles: \" \\ \/ \n \r \t \b \f. Does NOT handle \uXXXX (passes through).
+pub fn getStringUnescaped(json: []const u8, comptime expr: PathExpr, buf: []u8) ?[]const u8 {
+    var ctx = MatchContext.init(expr);
+    const token = ctx.findTarget(json) orelse return null;
+    if (token.tag != .string) return null;
+    const raw = token.bytes orelse return null;
+    return unescape(raw, buf);
+}
+
+/// Unescape a JSON string value. `src` is the raw bytes between quotes
+/// (as returned by the scanner). Writes unescaped result to `dst`.
+/// Returns slice of `dst` written, or null if dst is too small.
+fn unescape(src: []const u8, dst: []u8) ?[]const u8 {
+    var si: usize = 0;
+    var di: usize = 0;
+
+    while (si < src.len) {
+        if (src[si] == '\\' and si + 1 < src.len) {
+            const c = src[si + 1];
+            const replacement: ?u8 = switch (c) {
+                '"' => '"',
+                '\\' => '\\',
+                '/' => '/',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'b' => 0x08,
+                'f' => 0x0C,
+                else => null,
+            };
+            if (replacement) |r| {
+                if (di >= dst.len) return null;
+                dst[di] = r;
+                di += 1;
+                si += 2;
+                continue;
+            }
+            // Unknown escape (including \uXXXX) — pass through as-is
+            if (di + 1 >= dst.len) return null;
+            dst[di] = src[si];
+            dst[di + 1] = src[si + 1];
+            di += 2;
+            si += 2;
+            continue;
+        }
+        if (di >= dst.len) return null;
+        dst[di] = src[si];
+        di += 1;
+        si += 1;
+    }
+    return dst[0..di];
+}
+
 /// Extract a raw JSON value at the given path.
 pub fn getRaw(json: []const u8, comptime expr: PathExpr) ?[]const u8 {
     var ctx = MatchContext.init(expr);
@@ -443,6 +498,133 @@ test "getString finds sibling key after nested array in object" {
     try std.testing.expectEqualStrings("found", result.?);
 }
 
+// --- getStringUnescaped tests ---
+
+test "getStringUnescaped: newlines" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"hello\\nworld\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("hello\nworld", val.?);
+}
+
+test "getStringUnescaped: quotes" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"say \\\"hi\\\"\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("say \"hi\"", val.?);
+}
+
+test "getStringUnescaped: backslashes" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"C:\\\\Users\\\\test\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("C:\\Users\\test", val.?);
+}
+
+test "getStringUnescaped: tabs and carriage returns" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"a\\tb\\rc\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("a\tb\rc", val.?);
+}
+
+test "getStringUnescaped: no escapes passes through" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"hello world\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("hello world", val.?);
+}
+
+test "getStringUnescaped: forward slash" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"url\":\"http:\\/\\/example.com\"}";
+    const val = getStringUnescaped(json, comptime path("url"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("http://example.com", val.?);
+}
+
+test "getStringUnescaped: missing path returns null" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"other\":\"val\"}";
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: buffer too small returns null" {
+    var buf: [3]u8 = undefined;
+    const json = "{\"text\":\"hello\"}";
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: nested path with escapes" {
+    var buf: [128]u8 = undefined;
+    const json = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"line1\\nline2\\nline3\"}]}}]}";
+    const val = getStringUnescaped(json, comptime path("candidates[0].content.parts[0].text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("line1\nline2\nline3", val.?);
+}
+
+test "getStringUnescaped: unknown escape passed through" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\u0041\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    // \uXXXX not decoded — passed through as-is
+    try std.testing.expectEqualStrings("\\u0041", val.?);
+}
+
+// --- DST: unescape property tests ---
+
+test "DST: unescape roundtrip — unescaped is never longer than input" {
+    const seed_base: u64 = 0xCAFE_BABE_0000_0000;
+    const num_seeds: u64 = 500;
+
+    const escape_chars = "\"\\nrtbf/";
+    for (0..num_seeds) |i| {
+        const seed = seed_base +% i;
+        var rng = std.Random.Xoshiro256.init(seed);
+        const random = rng.random();
+
+        // Build a random JSON string value with escape sequences
+        var src_buf: [128]u8 = undefined;
+        var src_len: usize = 0;
+        const num_chars = random.intRangeAtMost(u8, 0, 60);
+        for (0..num_chars) |_| {
+            if (src_len + 2 >= src_buf.len) break;
+            if (random.intRangeAtMost(u8, 0, 3) == 0) {
+                // Insert escape sequence
+                src_buf[src_len] = '\\';
+                src_buf[src_len + 1] = escape_chars[random.intRangeLessThan(usize, 0, escape_chars.len)];
+                src_len += 2;
+            } else {
+                // Normal printable char
+                src_buf[src_len] = random.intRangeAtMost(u8, 0x20, 0x7E);
+                if (src_buf[src_len] == '\\' or src_buf[src_len] == '"') {
+                    src_buf[src_len] = 'x'; // avoid accidental escapes
+                }
+                src_len += 1;
+            }
+        }
+        const src = src_buf[0..src_len];
+
+        var dst: [128]u8 = undefined;
+        const result = unescape(src, &dst);
+        if (result) |unescaped| {
+            // Invariant: unescaped length <= source length
+            if (unescaped.len > src.len) {
+                std.log.err("FAIL seed={d} (0x{x}): unescaped len {d} > src len {d}", .{
+                    seed, seed, unescaped.len, src.len,
+                });
+                return error.TestUnexpectedResult;
+            }
+        }
+    }
+}
+
 // --- Fuzz tests ---
 
 test "fuzz getString never crashes on arbitrary input" {
@@ -457,6 +639,9 @@ test "fuzz getString never crashes on arbitrary input" {
             _ = getRaw(input, comptime path("a[0]"));
             _ = getObject(input, comptime path("a"));
             _ = getObject(input, comptime path("a[0].b"));
+            var ubuf: [256]u8 = undefined;
+            _ = getStringUnescaped(input, comptime path("a"), &ubuf);
+            _ = getStringUnescaped(input, comptime path("a[0].b"), &ubuf);
         }
     }.f, .{});
 }
