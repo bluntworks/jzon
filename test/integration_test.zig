@@ -108,8 +108,8 @@ test "Ollama streaming response extraction" {
 
 test "request body round-trip: build with writer, validate with std.json" {
     var buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    var w = jzon.jsonWriter(fbs.writer());
+    var writer = std.Io.Writer.fixed(&buf);
+    var w = jzon.jsonWriter(&writer);
 
     try w.beginTopObject();
     try w.string("model", "claude-sonnet-4-20250514");
@@ -127,7 +127,7 @@ test "request body round-trip: build with writer, validate with std.json" {
     try w.raw("tools", tools_json);
     try w.end();
 
-    const result = fbs.getWritten();
+    const result = writer.buffered();
 
     // Parse with std.json to verify well-formedness
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, result, .{});
@@ -151,15 +151,15 @@ test "request body round-trip: build with writer, validate with std.json" {
 
 test "extract from writer output without round-trip through std.json" {
     var buf: [1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    var w = jzon.jsonWriter(fbs.writer());
+    var writer = std.Io.Writer.fixed(&buf);
+    var w = jzon.jsonWriter(&writer);
 
     try w.beginTopObject();
     try w.string("status", "ok");
     try w.integer("count", 7);
     try w.end();
 
-    const json = fbs.getWritten();
+    const json = writer.buffered();
 
     try std.testing.expectEqualStrings("ok", jzon.getString(json, comptime jzon.path("status")).?);
     try std.testing.expectEqual(@as(i64, 7), jzon.getInt(json, comptime jzon.path("count")).?);

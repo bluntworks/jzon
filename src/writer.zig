@@ -5,9 +5,13 @@ pub const MAX_DEPTH = 64;
 
 pub const WriteError = error{MaxDepthExceeded};
 
-/// JSON writer generic over any std.io.Writer type.
+/// JSON writer generic over any writer type with writeAll/writeByte/print.
 /// Handles comma insertion, string escaping, and nesting automatically.
 pub fn JsonWriter(comptime WriterType: type) type {
+    const ChildType = switch (@typeInfo(WriterType)) {
+        .pointer => |p| p.child,
+        else => WriterType,
+    };
     return struct {
         writer: WriterType,
         depth: u8 = 0,
@@ -16,7 +20,7 @@ pub fn JsonWriter(comptime WriterType: type) type {
 
         const Self = @This();
         const Container = enum { object, array };
-        const Error = WriterType.Error || WriteError;
+        const Error = ChildType.Error || WriteError;
 
         pub fn init(writer: WriterType) Self {
             return .{ .writer = writer };
@@ -178,19 +182,19 @@ pub fn JsonWriter(comptime WriterType: type) type {
     };
 }
 
-/// Create a JsonWriter from any std.io.Writer.
+/// Create a JsonWriter from any writer with writeAll/writeByte/print.
 pub fn jsonWriter(writer: anytype) JsonWriter(@TypeOf(writer)) {
     return JsonWriter(@TypeOf(writer)).init(writer);
 }
 
 // --- Tests ---
 
+var test_buf: [4096]u8 = undefined;
 fn writeToString(comptime f: anytype) ![]const u8 {
-    var buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    var w = jsonWriter(fbs.writer());
+    var writer = std.Io.Writer.fixed(&test_buf);
+    var w = jsonWriter(&writer);
     try f(&w);
-    return fbs.getWritten();
+    return writer.buffered();
 }
 
 test "writer produces empty object" {

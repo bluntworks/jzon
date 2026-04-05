@@ -67,8 +67,8 @@ const PRNG = struct {
 
 // --- JSON Generator ---
 
-const GenError = error{NoSpaceLeft};
-const FBS = std.io.FixedBufferStream([]u8);
+const GenError = error{WriteFailed};
+const Writer = std.Io.Writer;
 
 /// Configuration for JSON generation, driven by PRNG
 const GenConfig = struct {
@@ -123,12 +123,12 @@ const GenConfig = struct {
 
 fn generateJSON(rng: *PRNG, buf: []u8) GenError![]const u8 {
     const config = GenConfig.fromPRNG(rng);
-    var fbs = std.io.fixedBufferStream(buf);
-    try generateValue(rng, &fbs, 0, &config);
-    return fbs.getWritten();
+    var w = Writer.fixed(buf);
+    try generateValue(rng, &w, 0, &config);
+    return w.buffered();
 }
 
-fn generateValue(rng: *PRNG, fbs: *FBS, depth: u8, config: *const GenConfig) GenError!void {
+fn generateValue(rng: *PRNG, fbs: *Writer, depth: u8, config: *const GenConfig) GenError!void {
     if (depth >= config.max_depth) {
         try generateSimpleValue(rng, fbs, config);
         return;
@@ -140,46 +140,46 @@ fn generateValue(rng: *PRNG, fbs: *FBS, depth: u8, config: *const GenConfig) Gen
         2, 3 => try generateArray(rng, fbs, depth, config),
         4 => try generateString(rng, fbs, config),
         5 => try generateNumber(rng, fbs, config),
-        6 => try fbs.writer().writeAll(if (rng.boolean()) "true" else "false"),
-        7 => try fbs.writer().writeAll("null"),
+        6 => try fbs.writeAll(if (rng.boolean()) "true" else "false"),
+        7 => try fbs.writeAll("null"),
         else => unreachable,
     }
 }
 
-fn generateSimpleValue(rng: *PRNG, fbs: *FBS, config: *const GenConfig) GenError!void {
+fn generateSimpleValue(rng: *PRNG, fbs: *Writer, config: *const GenConfig) GenError!void {
     const choice = rng.intBelow(5);
     switch (choice) {
         0, 1 => try generateString(rng, fbs, config),
         2 => try generateNumber(rng, fbs, config),
-        3 => try fbs.writer().writeAll(if (rng.boolean()) "true" else "false"),
-        4 => try fbs.writer().writeAll("null"),
+        3 => try fbs.writeAll(if (rng.boolean()) "true" else "false"),
+        4 => try fbs.writeAll("null"),
         else => unreachable,
     }
 }
 
-fn maybeWhitespace(rng: *PRNG, fbs: *FBS, config: *const GenConfig) GenError!void {
+fn maybeWhitespace(rng: *PRNG, fbs: *Writer, config: *const GenConfig) GenError!void {
     switch (config.whitespace_mode) {
         .none => {},
         .light => {
-            if (rng.chance(30)) try fbs.writer().writeByte(' ');
+            if (rng.chance(30)) try fbs.writeByte(' ');
         },
         .heavy => {
             const ws_chars = " \t\n\r";
             const count = rng.intRange(0, 3);
             for (0..count) |_| {
-                try fbs.writer().writeByte(ws_chars[rng.intBelow(ws_chars.len)]);
+                try fbs.writeByte(ws_chars[rng.intBelow(ws_chars.len)]);
             }
         },
     }
 }
 
-fn generateObject(rng: *PRNG, fbs: *FBS, depth: u8, config: *const GenConfig) GenError!void {
+fn generateObject(rng: *PRNG, fbs: *Writer, depth: u8, config: *const GenConfig) GenError!void {
     const key_count = rng.intBelow(@as(usize, config.max_keys) + 1);
-    try fbs.writer().writeByte('{');
+    try fbs.writeByte('{');
     try maybeWhitespace(rng, fbs, config);
     for (0..key_count) |i| {
         if (i > 0) {
-            try fbs.writer().writeByte(',');
+            try fbs.writeByte(',');
             try maybeWhitespace(rng, fbs, config);
         }
         // Use realistic key names sometimes
@@ -189,27 +189,27 @@ fn generateObject(rng: *PRNG, fbs: *FBS, depth: u8, config: *const GenConfig) Ge
             try generateString(rng, fbs, config);
         }
         try maybeWhitespace(rng, fbs, config);
-        try fbs.writer().writeByte(':');
+        try fbs.writeByte(':');
         try maybeWhitespace(rng, fbs, config);
         try generateValue(rng, fbs, depth + 1, config);
         try maybeWhitespace(rng, fbs, config);
     }
-    try fbs.writer().writeByte('}');
+    try fbs.writeByte('}');
 }
 
-fn generateArray(rng: *PRNG, fbs: *FBS, depth: u8, config: *const GenConfig) GenError!void {
+fn generateArray(rng: *PRNG, fbs: *Writer, depth: u8, config: *const GenConfig) GenError!void {
     const elem_count = rng.intBelow(@as(usize, config.max_array_len) + 1);
-    try fbs.writer().writeByte('[');
+    try fbs.writeByte('[');
     try maybeWhitespace(rng, fbs, config);
     for (0..elem_count) |i| {
         if (i > 0) {
-            try fbs.writer().writeByte(',');
+            try fbs.writeByte(',');
             try maybeWhitespace(rng, fbs, config);
         }
         try generateValue(rng, fbs, depth + 1, config);
     }
     try maybeWhitespace(rng, fbs, config);
-    try fbs.writer().writeByte(']');
+    try fbs.writeByte(']');
 }
 
 const SAFE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?-_";
@@ -232,78 +232,78 @@ const REALISTIC_KEYS = [_][]const u8{
     "",              // empty string key
 };
 
-fn generateRealisticKey(rng: *PRNG, fbs: *FBS) GenError!void {
+fn generateRealisticKey(rng: *PRNG, fbs: *Writer) GenError!void {
     const key = REALISTIC_KEYS[rng.intBelow(REALISTIC_KEYS.len)];
-    try fbs.writer().writeByte('"');
-    try fbs.writer().writeAll(key);
-    try fbs.writer().writeByte('"');
+    try fbs.writeByte('"');
+    try fbs.writeAll(key);
+    try fbs.writeByte('"');
 }
 
-fn generateString(rng: *PRNG, fbs: *FBS, config: *const GenConfig) GenError!void {
+fn generateString(rng: *PRNG, fbs: *Writer, config: *const GenConfig) GenError!void {
     const len = rng.intBelow(@as(usize, config.max_string_len) + 1);
-    try fbs.writer().writeByte('"');
+    try fbs.writeByte('"');
     var i: usize = 0;
     while (i < len) {
         const r = rng.intBelow(100);
         switch (config.unicode_richness) {
             .ascii_only => {
                 if (r < 90) {
-                    try fbs.writer().writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
+                    try fbs.writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
                 } else {
                     // Escaped characters
                     const escapes = [_][]const u8{ "\\n", "\\t", "\\r", "\\\\", "\\\"", "\\/" };
-                    try fbs.writer().writeAll(escapes[rng.intBelow(escapes.len)]);
+                    try fbs.writeAll(escapes[rng.intBelow(escapes.len)]);
                 }
             },
             .basic_unicode => {
                 if (r < 70) {
-                    try fbs.writer().writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
+                    try fbs.writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
                 } else if (r < 80) {
                     const escapes = [_][]const u8{ "\\n", "\\t", "\\r", "\\\\", "\\\"", "\\/", "\\b", "\\f" };
-                    try fbs.writer().writeAll(escapes[rng.intBelow(escapes.len)]);
+                    try fbs.writeAll(escapes[rng.intBelow(escapes.len)]);
                 } else if (r < 90) {
                     // \u00XX range (Latin-1 supplement)
-                    try fbs.writer().writeAll("\\u00");
+                    try fbs.writeAll("\\u00");
                     const hex = "0123456789abcdef";
                     // Stay in printable range: 0x20-0xFF
-                    try fbs.writer().writeByte(hex[2 + rng.intBelow(14)]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[2 + rng.intBelow(14)]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
                 } else {
                     // Common unicode: degree, arrows, stars, accented
                     const uni = [_][]const u8{ "\\u00b0", "\\u00e9", "\\u00fc", "\\u00f1", "\\u2192", "\\u2728", "\\u2603", "\\u2764" };
-                    try fbs.writer().writeAll(uni[rng.intBelow(uni.len)]);
+                    try fbs.writeAll(uni[rng.intBelow(uni.len)]);
                 }
             },
             .full_unicode => {
                 if (r < 50) {
-                    try fbs.writer().writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
+                    try fbs.writeByte(SAFE_CHARS[rng.intBelow(SAFE_CHARS.len)]);
                 } else if (r < 60) {
                     const escapes = [_][]const u8{ "\\n", "\\t", "\\r", "\\\\", "\\\"", "\\/", "\\b", "\\f" };
-                    try fbs.writer().writeAll(escapes[rng.intBelow(escapes.len)]);
+                    try fbs.writeAll(escapes[rng.intBelow(escapes.len)]);
                 } else if (r < 70) {
                     // BMP codepoints: \u0100-\uFFFF (avoiding surrogates D800-DFFF)
-                    try fbs.writer().writeAll("\\u");
+                    try fbs.writeAll("\\u");
                     const hex = "0123456789abcdef";
                     const high_nibble = 1 + rng.intBelow(11); // 1-B (avoid D for surrogates)
-                    try fbs.writer().writeByte(hex[high_nibble]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[high_nibble]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
                 } else if (r < 80) {
                     // Surrogate pairs (emoji): \uD83D\uDE00-\uDE4F
-                    try fbs.writer().writeAll("\\uD83D\\uDE");
+                    try fbs.writeAll("\\uD83D\\uDE");
                     const hex = "0123456789abcdef";
-                    try fbs.writer().writeByte(hex[rng.intBelow(5)]); // 0-4
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[rng.intBelow(5)]); // 0-4
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
                 } else if (r < 85) {
                     // CJK-like: \u4E00-\u9FFF
-                    try fbs.writer().writeAll("\\u");
+                    try fbs.writeAll("\\u");
                     const hex = "0123456789abcdef";
                     const range_start = 4 + rng.intBelow(6); // 4-9
-                    try fbs.writer().writeByte(hex[range_start]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
-                    try fbs.writer().writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[range_start]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
+                    try fbs.writeByte(hex[rng.intBelow(16)]);
                 } else if (r < 90) {
                     // Multi-line content (markdown-like)
                     const patterns = [_][]const u8{
@@ -313,22 +313,22 @@ fn generateString(rng: *PRNG, fbs: *FBS, config: *const GenConfig) GenError!void
                         "\\n- bullet\\n- bullet\\n",
                         "\\n\\n",
                     };
-                    try fbs.writer().writeAll(patterns[rng.intBelow(patterns.len)]);
+                    try fbs.writeAll(patterns[rng.intBelow(patterns.len)]);
                     i += 5; // these are multi-char, skip ahead
                 } else {
                     // Raw printable ASCII variety: punctuation, brackets, etc.
                     const punct = "~`@#$%^&*()+=[]|;:'<>,./";
-                    try fbs.writer().writeByte(punct[rng.intBelow(punct.len)]);
+                    try fbs.writeByte(punct[rng.intBelow(punct.len)]);
                 }
             },
         }
         i += 1;
     }
-    try fbs.writer().writeByte('"');
+    try fbs.writeByte('"');
 }
 
-fn generateNumber(rng: *PRNG, fbs: *FBS, config: *const GenConfig) GenError!void {
-    const w = fbs.writer();
+fn generateNumber(rng: *PRNG, fbs: *Writer, config: *const GenConfig) GenError!void {
+    const w = fbs;
 
     // Negative sign
     if (rng.chance(30)) try w.writeByte('-');
@@ -565,9 +565,9 @@ fn simRoundTrip(rng: *PRNG) !void {
 
     // escape → unescape roundtrip
     var escaped_buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&escaped_buf);
-    jzon_escape.escape(fbs.writer(), input) catch return;
-    const escaped = fbs.getWritten();
+    var esc_w = Writer.fixed(&escaped_buf);
+    jzon_escape.escape(&esc_w, input) catch return;
+    const escaped = esc_w.buffered();
 
     var scratch: [4096]u8 = undefined;
     const result = jzon_escape.unescape(escaped, &scratch) catch return;
@@ -579,15 +579,15 @@ fn simRoundTrip(rng: *PRNG) !void {
 
     // Writer → getString roundtrip
     var write_buf: [8192]u8 = undefined;
-    var write_fbs = std.io.fixedBufferStream(&write_buf);
-    var w = jzon_writer.jsonWriter(write_fbs.writer());
+    var write_w = Writer.fixed(&write_buf);
+    var w = jzon_writer.jsonWriter(&write_w);
     w.beginTopObject() catch return;
     w.string("key", input) catch return;
     // Also test with realistic key names to exercise prefix matching
     w.string("content", input) catch return;
     w.string("content_filter", "none") catch return;
     w.end() catch return;
-    const json = write_fbs.getWritten();
+    const json = write_w.buffered();
 
     // Extract "key" value
     const extracted = jzon_path.getString(json, comptime jzon_path.path("key"));
@@ -696,8 +696,8 @@ fn simAssembler(rng: *PRNG, allocator: std.mem.Allocator) !void {
 
 fn simLLMPayload(rng: *PRNG) !void {
     var buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const w = fbs.writer();
+    var fbs = Writer.fixed(&buf);
+    const w = &fbs;
 
     const provider = rng.intBelow(3);
     var expected_content: [512]u8 = undefined;
@@ -740,7 +740,7 @@ fn simLLMPayload(rng: *PRNG) !void {
         else => unreachable,
     }
 
-    const json = fbs.getWritten();
+    const json = fbs.buffered();
     verboseLog("  llm payload ({d} bytes): {s}\n", .{ json.len, json[0..@min(json.len, 200)] });
 
     // Extract and verify
@@ -820,7 +820,7 @@ const REGRESSION_SEEDS = [_]u64{
 
 test "deterministic simulation (1000 seeds)" {
     // Check for VERBOSE env var
-    verbose = std.posix.getenv("VERBOSE") != null;
+    verbose = std.c.getenv("VERBOSE") != null;
 
     const allocator = std.testing.allocator;
     for (REGRESSION_SEEDS) |seed| {
@@ -838,7 +838,7 @@ test "deterministic simulation (1000 seeds)" {
 }
 
 test "deterministic simulation extended (10000 seeds)" {
-    verbose = std.posix.getenv("VERBOSE") != null;
+    verbose = std.c.getenv("VERBOSE") != null;
 
     const allocator = std.testing.allocator;
     for (0..10000) |seed| {

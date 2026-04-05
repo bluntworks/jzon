@@ -793,7 +793,10 @@ test "DST: unescape buffer-too-small returns null without corruption" {
 
 test "fuzz getString never crashes on arbitrary input" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             // Try extracting from arbitrary bytes with various path shapes
             _ = getString(input, comptime path("a"));
             _ = getString(input, comptime path("a.b.c"));

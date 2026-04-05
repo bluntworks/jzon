@@ -201,7 +201,10 @@ test "assembler handles empty chunk" {
 
 test "fuzz assembler never crashes on arbitrary input as single chunk" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             var asmb = Assembler.init();
             defer asmb.deinit(std.testing.allocator);
             _ = asmb.feed(std.testing.allocator, input) catch {};
@@ -211,7 +214,10 @@ test "fuzz assembler never crashes on arbitrary input as single chunk" {
 
 test "fuzz assembler never crashes with input split at every byte" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             // Feed one byte at a time
             var asmb = Assembler.init();
             defer asmb.deinit(std.testing.allocator);

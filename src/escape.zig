@@ -1,7 +1,14 @@
 const std = @import("std");
 
+fn WriterError(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .pointer => |p| p.child.Error,
+        else => T.Error,
+    };
+}
+
 /// Writes RFC 8259 JSON-escaped version of `input` to `writer`.
-pub fn escape(writer: anytype, input: []const u8) @TypeOf(writer).Error!void {
+pub fn escape(writer: anytype, input: []const u8) WriterError(@TypeOf(writer))!void {
     for (input) |c| {
         switch (c) {
             '"' => try writer.writeAll("\\\""),
@@ -135,16 +142,16 @@ test "unescape decodes basic escape sequences" {
 
 test "escape encodes quotes backslashes and control chars" {
     var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try escape(fbs.writer(), "say \"hello\"\nnew\\line");
-    try std.testing.expectEqualStrings("say \\\"hello\\\"\\nnew\\\\line", fbs.getWritten());
+    var w = std.Io.Writer.fixed(&buf);
+    try escape(&w, "say \"hello\"\nnew\\line");
+    try std.testing.expectEqualStrings("say \\\"hello\\\"\\nnew\\\\line", w.buffered());
 }
 
 test "escape passes through plain ASCII unchanged" {
     var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try escape(fbs.writer(), "hello world");
-    try std.testing.expectEqualStrings("hello world", fbs.getWritten());
+    var w = std.Io.Writer.fixed(&buf);
+    try escape(&w, "hello world");
+    try std.testing.expectEqualStrings("hello world", w.buffered());
 }
 
 // --- HARDEN: boundary and error tests ---
@@ -206,9 +213,9 @@ test "escape roundtrip preserves string" {
     const cases = [_][]const u8{ "hello", "line\nnewline", "tab\there", "quote\"inside", "", "back\\slash" };
     for (cases) |input| {
         var escaped_buf: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&escaped_buf);
-        try escape(fbs.writer(), input);
-        const escaped = fbs.getWritten();
+        var w = std.Io.Writer.fixed(&escaped_buf);
+        try escape(&w, input);
+        const escaped = w.buffered();
 
         var scratch: [256]u8 = undefined;
         const result = try unescape(escaped, &scratch);
@@ -224,7 +231,10 @@ test "escape roundtrip preserves string" {
 
 test "fuzz unescape never crashes on arbitrary input" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             var scratch: [4096]u8 = undefined;
             _ = unescape(input, &scratch) catch {};
         }
@@ -233,12 +243,15 @@ test "fuzz unescape never crashes on arbitrary input" {
 
 test "fuzz escape then unescape roundtrips without crashing" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             // Escape arbitrary bytes (escape accepts any []const u8)
             var escaped_buf: [16384]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&escaped_buf);
-            escape(fbs.writer(), input) catch return; // buffer too small is fine
-            const escaped = fbs.getWritten();
+            var w = std.Io.Writer.fixed(&escaped_buf);
+            escape(&w, input) catch return; // buffer too small is fine
+            const escaped = w.buffered();
 
             // Unescape must roundtrip back to original
             var scratch: [4096]u8 = undefined;

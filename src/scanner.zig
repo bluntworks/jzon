@@ -441,7 +441,10 @@ test "scanner handles mixed array values" {
 
 test "fuzz scanner never crashes on arbitrary input" {
     try std.testing.fuzz({}, struct {
-        fn f(_: void, input: []const u8) anyerror!void {
+        fn f(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input_buf: [4096]u8 = undefined;
+            const len = smith.sliceWithHash(&input_buf, 0);
+            const input = input_buf[0..len];
             var scanner = Scanner.init();
             var pos: usize = 0;
             while (pos < input.len) {
