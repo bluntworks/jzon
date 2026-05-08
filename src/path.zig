@@ -84,7 +84,14 @@ pub fn getStringUnescaped(json: []const u8, comptime expr: PathExpr, buf: []u8) 
 
 /// Unescape a JSON string value. `src` is the raw bytes between quotes
 /// (as returned by the scanner). Writes unescaped result to `dst`.
-/// Returns slice of `dst` written, or null if dst is too small.
+/// Returns slice of `dst` written, or null if dst is too small or any
+/// `\uXXXX` escape is malformed.
+///
+/// Handles all RFC 8259 string escapes: `\"`, `\\`, `\/`, `\n`, `\r`,
+/// `\t`, `\b`, `\f`, and `\uXXXX` including UTF-16 surrogate pairs
+/// (`😊` → 😊). Surrogate pairs are required to be paired —
+/// a lone high surrogate or lone low surrogate returns null. Output
+/// for `\uXXXX` escapes is UTF-8 (1-4 bytes per codepoint).
 fn unescape(src: []const u8, dst: []u8) ?[]const u8 {
     var si: usize = 0;
     var di: usize = 0;
@@ -110,7 +117,44 @@ fn unescape(src: []const u8, dst: []u8) ?[]const u8 {
                 si += 2;
                 continue;
             }
-            // Unknown escape (including \uXXXX) — pass through as-is
+            // \uXXXX — decode hex codepoint (4 ASCII hex digits) and
+            // emit UTF-8. Handles surrogate pairs `\uD8XX\uDCXX` →
+            // single non-BMP codepoint. This case landed because mlx-
+            // swift's OpenAI-compat JSON serializer writes non-ASCII as
+            // \u escapes (Python `ensure_ascii=True` style); without
+            // decoding here, emojis from the LLM render as literal
+            // 12-character `\udXXX\udXXX` sequences in the chat UI.
+            if (c == 'u') {
+                if (si + 6 > src.len) return null;
+                const hex = src[si + 2 ..][0..4];
+                const codepoint = std.fmt.parseInt(u21, hex, 16) catch return null;
+                si += 6;
+                if (codepoint >= 0xD800 and codepoint <= 0xDBFF) {
+                    // High surrogate — must be followed by `\uXXXX`
+                    // low-surrogate pair to form a valid codepoint.
+                    if (si + 6 > src.len) return null;
+                    if (src[si] != '\\' or src[si + 1] != 'u') return null;
+                    const lo_hex = src[si + 2 ..][0..4];
+                    const lo = std.fmt.parseInt(u21, lo_hex, 16) catch return null;
+                    if (lo < 0xDC00 or lo > 0xDFFF) return null;
+                    si += 6;
+                    const combined: u21 =
+                        0x10000 +
+                        ((@as(u21, codepoint) - 0xD800) << 10) +
+                        (lo - 0xDC00);
+                    const len = std.unicode.utf8Encode(combined, dst[di..]) catch return null;
+                    di += len;
+                    continue;
+                }
+                if (codepoint >= 0xDC00 and codepoint <= 0xDFFF) {
+                    // Lone low surrogate — invalid per RFC 8259.
+                    return null;
+                }
+                const len = std.unicode.utf8Encode(codepoint, dst[di..]) catch return null;
+                di += len;
+                continue;
+            }
+            // Truly unknown escape — pass through as-is (legacy behavior).
             if (di + 1 >= dst.len) return null;
             dst[di] = src[si];
             dst[di + 1] = src[si + 1];
@@ -508,6 +552,61 @@ test "getStringUnescaped: newlines" {
     try std.testing.expectEqualStrings("hello\nworld", val.?);
 }
 
+test "getStringUnescaped: BMP unicode escape decodes to UTF-8" {
+    var buf: [64]u8 = undefined;
+    // é = U+00E9 (é, two-byte UTF-8: 0xC3 0xA9)
+    const json = "{\"text\":\"caf\\u00e9\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("café", val.?);
+}
+
+test "getStringUnescaped: surrogate pair decodes to non-BMP UTF-8" {
+    // Real-world bug: mlx-swift / vllm-swift / Python json.dumps with
+    // ensure_ascii=True emit emojis as `😊` (UTF-16 surrogate
+    // pair, valid JSON per RFC 8259). Before the fix this passed
+    // through as the literal 12-character escape sequence and rendered
+    // as `😊` in chat UIs.
+    var buf: [64]u8 = undefined;
+    // U+1F60A SMILING FACE = surrogate pair 😊
+    const json = "{\"text\":\"hi \\uD83D\\uDE0A!\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("hi 😊!", val.?);
+}
+
+test "getStringUnescaped: lone high surrogate returns null" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\uD83D\"}"; // high surrogate, no low
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: lone low surrogate returns null" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\uDE0A\"}"; // low surrogate, no high
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: high surrogate not followed by \\u returns null" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\uD83D!\"}"; // high surrogate, then literal '!'
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: truncated unicode escape returns null" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\u12\"}"; // only 2 hex digits
+    try std.testing.expect(getStringUnescaped(json, comptime path("text"), &buf) == null);
+}
+
+test "getStringUnescaped: mixed escapes in a single string" {
+    var buf: [64]u8 = undefined;
+    const json = "{\"text\":\"\\\"caf\\u00e9\\n\\u00f1y\\\"\"}";
+    const val = getStringUnescaped(json, comptime path("text"), &buf);
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("\"café\nñy\"", val.?);
+}
+
 test "getStringUnescaped: quotes" {
     var buf: [64]u8 = undefined;
     const json = "{\"text\":\"say \\\"hi\\\"\"}";
@@ -568,13 +667,15 @@ test "getStringUnescaped: nested path with escapes" {
     try std.testing.expectEqualStrings("line1\nline2\nline3", val.?);
 }
 
-test "getStringUnescaped: unknown escape passed through" {
+test "getStringUnescaped: ASCII unicode escape decodes to UTF-8 single byte" {
+    // A = 'A' (U+0041 LATIN CAPITAL LETTER A — single ASCII byte
+    // in UTF-8). Pre-fix this passed through as the literal six-character
+    // sequence `A`; post-fix it decodes correctly.
     var buf: [64]u8 = undefined;
     const json = "{\"text\":\"\\u0041\"}";
     const val = getStringUnescaped(json, comptime path("text"), &buf);
     try std.testing.expect(val != null);
-    // \uXXXX not decoded — passed through as-is
-    try std.testing.expectEqualStrings("\\u0041", val.?);
+    try std.testing.expectEqualStrings("A", val.?);
 }
 
 // --- DST: unescape property tests ---
